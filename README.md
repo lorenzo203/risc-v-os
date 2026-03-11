@@ -2,7 +2,7 @@
 
 A small educational RISC-V operating system project focused on building and running a minimal kernel from scratch.
 
-Built primarily by following the excellent tutorial "Operating System in 1000 Lines" by [Seiya Nuta](github.com/nuta).
+Built primarily by following the excellent tutorial "Operating System in 1000 Lines" by [Seiya Nuta](https://github.com/nuta).
 
 ## Project Files
 
