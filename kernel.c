@@ -4,11 +4,13 @@ typedef unsigned char uint8_t;
 typedef unsigned int uint32_t;
 typedef uint32_t size_t;
 
+/* Useful function prototypes for compilation. */
+void yield(void);
+void map_page(uint32_t *table1, uint32_t vaddr, paddr_t paddr, uint32_t flags);
+
 extern char __bss[], __bss_end[], __stack_top[];
 /* extern since the variables will be allocated
  * trough the linker script kernel.ld         */
-
-
 
 struct sbiret sbi_call(long arg0, long arg1, long arg2, long arg3, long arg4,
                        long arg5, long fid, long eid) {
@@ -58,7 +60,7 @@ __attribute__((aligned(4)))
 void kernel_entry(void) {
     __asm__ __volatile__(
         //get the kernel stack of the running process from sscratch
-        "csrrw sscratch, sp\n" // swap in short
+        "csrrw sp, sscratch, sp\n" // swap in short
         "addi sp, sp, -4 * 31\n"
         "sw ra,  4 * 0(sp)\n"
         "sw gp,  4 * 1(sp)\n"
@@ -227,6 +229,7 @@ __attribute__((naked)) void switch_context(uint32_t *prev_sp,
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 struct process procs[PROCS_MAX]; // All process control structures.
+extern char __kernel_base[];
 
 struct process *create_process(uint32_t pc) {
     /* Find an unused process control structure. */
@@ -259,10 +262,17 @@ struct process *create_process(uint32_t pc) {
     *--sp = 0;                      // s0
     *--sp = (uint32_t) pc;          // ra
 
+    // Map kernel pages.
+    uint32_t *page_table = (uint32_t *) alloc_pages(1);
+    for (paddr_t paddr = (paddr_t) __kernel_base;
+         paddr < (paddr_t) __free_ram_end; paddr += PAGE_SIZE)
+        map_page(page_table, paddr, paddr, PAGE_R | PAGE_W | PAGE_X);
+
     // Initialize fields.
     proc->pid = i + 1;
     proc->state = PROC_RUNNABLE;
     proc->sp = (uint32_t) sp;
+    proc->page_table = page_table;
     return proc;
 }
 
@@ -280,7 +290,7 @@ void proc_a_entry(void) {
     printf("starting process A\n");
     while (1) {
         putchar('A');
-        yeld();
+        yield();
         }
 }
 
@@ -288,7 +298,7 @@ void proc_b_entry(void) {
     printf("starting process B\n");
     while (1) {
         putchar('B');
-        yeld();
+        yield();
         }
 }
 
@@ -316,9 +326,13 @@ void yield(void) {
         return;
 
     __asm__ __volatile__(
+        "sfence.vma\n"
+        "csrw satp, %[satp]\n"
+        "sfence.vma\n"
         "csrw sscratch, %[sscratch]\n"
         :
-        : [sscratch] "r" ((uint32_t) &next->stack[sizeof(next->stack)])
+        : [satp] "r" (SATP_SV32 | ((uint32_t) next->page_table / PAGE_SIZE)),
+          [sscratch] "r" ((uint32_t) &next->stack[sizeof(next->stack)])
     );
 
     // Context switch
@@ -327,6 +341,53 @@ void yield(void) {
     switch_context(&prev->sp, &next->sp);
 }
 
+/* =========================================
+ *
+ *              Page Mapping
+ *
+ * ========================================= */
+
+void map_page(uint32_t *table1, uint32_t vaddr, paddr_t paddr, uint32_t flags) {
+    /* 
+     * variables:
+     *
+     * vaddr: virtual address
+     * paddr: physical address
+     * flags: page table entry flags
+     *
+     */
+    if (!is_aligned(vaddr, PAGE_SIZE))
+        PANIC("unaligned vaddr %x", vaddr);
+/* Checking for both vaddr and paddr alignement with PAGE_SIZE */
+    if (!is_aligned(paddr, PAGE_SIZE))
+        PANIC("unaligned paddr %x", paddr);
+
+    uint32_t vpn1 = (vaddr >> 22) & 0x3ff;
+    /*filters the first 10 bits (bitwise AND) */
+    if ((table1[vpn1] & PAGE_V) == 0) {
+        /* Create the 1st level page table if it doesn't exist.*/
+        uint32_t pt_paddr = alloc_pages(1);
+        table1[vpn1] = ((pt_paddr / PAGE_SIZE) << 10) | PAGE_V;
+    }
+
+    /* Set the 2nd level page table entry to map the physical page.*/
+    uint32_t vpn0 = (vaddr >> 12) & 0x3ff;
+    uint32_t *table0 = (uint32_t *) ((table1[vpn1] >> 10) * PAGE_SIZE);
+    /* Retrieves table0 from table1 by shifting 10 
+     * bits to the right and multiplying by 4096. */
+    table0[vpn0] = ((paddr / PAGE_SIZE) << 10) | flags | PAGE_V;
+    /* Paste both PAGE_V and the other flags on the last 10 bits. */
+}
+/* ==== DATA STRUCTURES CLARIFICATION ======
+ * vaddr:
+ *  -10 bits for vpn1
+ *  -10 bits for vpn0
+ *  -12 bits of offset for the page
+ *      (2**12 = 4096 = PAGE_SIZE)
+ * table0, table1 entries:
+ *  -22 bits for real physical addr (paddr/4096)
+ *  -10 bits for the flags
+ *  ======================================== */
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~      
  *
  *        kernel_main function:
@@ -348,6 +409,6 @@ void kernel_main(void) {
     proc_a = create_process((uint32_t) proc_a_entry);
     proc_b = create_process((uint32_t) proc_b_entry);
 
-    yeld();
+    yield();
     PANIC("switched to idle");
 }
