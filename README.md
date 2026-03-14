@@ -9,7 +9,7 @@ This repo is focused on early boot flow, linker-driven memory layout, trap handl
 
 ## Project Files
 
-- `kernel.c`, `kernel.h`: Boot path, SBI calls, trap handling, and kernel entry logic.
+- `kernel.c`, `kernel.h`: Boot path, SBI/trap handling, paging/page-table mapping, process setup, scheduler, context switching, and kernel entry logic.
 - `common.c`, `common.h`: Minimal freestanding utilities (`printf`, `memset`, `memcpy`, string helpers).
 - `kernel.ld`: Kernel memory layout and linker symbols.
 - `run.sh`: Build and run script (Clang + QEMU).
