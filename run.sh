@@ -9,13 +9,14 @@ OS=$(uname)
 if [ "$OS" = "Darwin" ]; then
     # macOS settings 
     CC=/opt/homebrew/opt/llvm/bin/clang
+    OBJCOPY=/opt/homebrew/opt/llvm/bin/llvm-objcopy
 elif [ "$OS" = "Linux" ]; then
     # Linux settings
     CC=clang
+    OBJCOPY=llvm-objcopy
 fi
-CFLAGS="-std=c11 -O2 -g3 -Wall -Wextra --target=riscv32-unknown-elf -fuse-ld=lld -fno-stack-protector -ffreestanding -nostdlib"
 
-OBJCOPY=/opt/homebrew/opt/llvm/bin/llvm-objcopy
+CFLAGS="-std=c11 -O2 -g3 -Wall -Wextra --target=riscv32-unknown-elf -fuse-ld=lld -fno-stack-protector -ffreestanding -nostdlib"
 
 # Build the shell (application)
 $CC $CFLAGS -Wl,-Tuser.ld -Wl,-Map=shell.map -o shell.elf shell.c user.c common.c
