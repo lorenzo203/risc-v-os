@@ -7,6 +7,8 @@ typedef uint32_t size_t;
 /* Useful function prototypes for compilation. */
 void yield(void);
 void map_page(uint32_t *table1, uint32_t vaddr, paddr_t paddr, uint32_t flags);
+void handle_syscall(struct trap_frame *f);
+long getchar(void);
 
 extern char __bss[], __bss_end[], __stack_top[];
 /* extern since the variables will be allocated
@@ -151,7 +153,14 @@ void handle_trap(struct trap_frame *f) {
     uint32_t stval = READ_CSR(stval);
     uint32_t user_pc = READ_CSR(sepc);
 
-    PANIC("unexpected trap scause=%x, stval=%x, sepc=%x\n", scause, stval, user_pc);
+    if (scause == SCAUSE_ECALL){
+        handle_syscall(f);
+        user_pc += 4;
+    } else {
+        PANIC("unexpected trap scause=%x, stval=%x, sepc=%x\n", scause, stval, user_pc);
+    }
+
+    WRITE_CSR(sepc, user_pc);
 }
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -414,6 +423,52 @@ void map_page(uint32_t *table1, uint32_t vaddr, paddr_t paddr, uint32_t flags) {
  *  -10 bits for the flags
  *  ======================================== */
 
+/* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            SYSTEM CALL HANDLER
+    Gets called by handle_trap function and
+    determines the kind of syscall invoked 
+    by checking the value of register a3.
+   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
+void handle_syscall(struct trap_frame *f){
+    switch(f->a3){
+        case SYS_PUTCHAR:
+            putchar(f->a0);
+            break;
+        case SYS_GETCHAR:
+            while (1) {
+                long ch = getchar();
+                if (ch >= 0) {
+                    f->a0 = ch;
+                    break;
+                }
+                yield();
+            }
+            break;
+        case SYS_EXIT:
+            printf("process %d exited\n", current_proc->pid);
+            current_proc->state = PROC_EXITED;
+            yield();
+            PANIC("unreachable");
+        /* After exiting, the syscall calls the yeld() to give up CPU to other processes.
+            NB: In this case the process is just marked as PROC_EXITED, but in a real kernel
+                it might be necessary to free all the resources that the process is holding,
+                both in terms of memory regions and page tables.*/
+        default:
+            PANIC("Unexpected Syscall a3=%x\n", f->a3);
+    }
+}
+
+/* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+            GETCHAR SYSTEM CALL
+   Calls SBI in order to read the serial 
+   port input, which through QEMU is 
+   connected to the keyboard
+   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
+long getchar(void){
+    struct sbiret ret = sbi_call(0, 0, 0, 0, 0, 0, 0, 2);
+    return ret.error;
+}
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~      
  *
  *        kernel_main function:
